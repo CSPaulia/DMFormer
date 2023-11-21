@@ -9,34 +9,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-DEVICE = config.device
-
-
-class LabelSmoothing(nn.Module):
-    """Implement label smoothing."""
-
-    def __init__(self, size, padding_idx, smoothing=0.0):
-        super(LabelSmoothing, self).__init__()
-        self.criterion = nn.KLDivLoss(size_average=False)
-        self.padding_idx = padding_idx
-        self.confidence = 1.0 - smoothing
-        self.smoothing = smoothing
-        self.size = size
-        self.true_dist = None
-
-    def forward(self, x, target):
-        assert x.size(1) == self.size
-        true_dist = x.data.clone()
-        true_dist.fill_(self.smoothing / (self.size - 2))
-        true_dist.scatter_(1, target.data.unsqueeze(1), self.confidence)
-        true_dist[:, self.padding_idx] = 0
-        mask = torch.nonzero(target.data == self.padding_idx)
-        if mask.dim() > 0:
-            true_dist.index_fill_(0, mask.squeeze(), 0.0)
-        self.true_dist = true_dist
-        return self.criterion(x, Variable(true_dist, requires_grad=False))
-
-
 class Embeddings(nn.Module):
     def __init__(self, d_model, vocab):
         super(Embeddings, self).__init__()
@@ -57,7 +29,7 @@ class PositionalEncoding(nn.Module):
 
         # 初始化一个size为 max_len(设定的最大长度)×embedding维度 的全零矩阵
         # 来存放所有小于这个长度位置对应的positional embedding
-        pe = torch.zeros(max_len, d_model, device=DEVICE)
+        pe = torch.zeros(max_len, d_model)
         # 生成一个位置下标的tensor矩阵(每一行都是一个位置下标)
         """
         形式如：
@@ -68,9 +40,9 @@ class PositionalEncoding(nn.Module):
                 [4.],
                 ...])
         """
-        position = torch.arange(0., max_len, device=DEVICE).unsqueeze(1)
+        position = torch.arange(0., max_len).unsqueeze(1)
         # 这里幂运算太多，我们使用exp和log来转换实现公式中pos下面要除以的分母（由于是分母，要注意带负号）
-        div_term = torch.exp(torch.arange(0., d_model, 2, device=DEVICE) * -(math.log(10000.0) / d_model))
+        div_term = torch.exp(torch.arange(0., d_model, 2) * -(math.log(10000.0) / d_model))
 
         # 根据公式，计算各个位置在各embedding维度上的位置纹理值，存放到pe矩阵中
         pe[:, 0::2] = torch.sin(position * div_term)
@@ -302,21 +274,21 @@ class Generator(nn.Module):
         return F.log_softmax(self.proj(x), dim=-1)
 
 
-def make_model(src_vocab, tgt_vocab, N=6, d_model=512, d_ff=2048, h=8, dropout=0.1):
+def make_model(src_em_size, tgt_em_size, class_num, N=6, d_model=512, d_ff=2048, h=8, dropout=0.1):
     c = copy.deepcopy
     # 实例化Attention对象
-    attn = MultiHeadedAttention(h, d_model).to(DEVICE)
+    attn = MultiHeadedAttention(h, d_model)
     # 实例化FeedForward对象
-    ff = PositionwiseFeedForward(d_model, d_ff, dropout).to(DEVICE)
+    ff = PositionwiseFeedForward(d_model, d_ff, dropout)
     # 实例化PositionalEncoding对象
-    position = PositionalEncoding(d_model, dropout).to(DEVICE)
+    position = PositionalEncoding(d_model, dropout)
     # 实例化Transformer模型对象
     model = Transformer(
-        Encoder(EncoderLayer(d_model, c(attn), c(ff), dropout).to(DEVICE), N).to(DEVICE),
-        Decoder(DecoderLayer(d_model, c(attn), c(attn), c(ff), dropout).to(DEVICE), N).to(DEVICE),
-        nn.Sequential(Embeddings(d_model, src_vocab).to(DEVICE), c(position)),
-        nn.Sequential(Embeddings(d_model, tgt_vocab).to(DEVICE), c(position)),
-        Generator(d_model, tgt_vocab)).to(DEVICE)
+        Encoder(EncoderLayer(d_model, c(attn), c(ff), dropout), N),
+        Decoder(DecoderLayer(d_model, c(attn), c(attn), c(ff), dropout), N),
+        nn.Sequential(Embeddings(d_model, src_em_size), c(position)),
+        nn.Sequential(Embeddings(d_model, tgt_em_size), c(position)),
+        Generator(d_model, class_num))
 
     # This was important from their code.
     # Initialize parameters with Glorot / fan_avg.
@@ -324,7 +296,7 @@ def make_model(src_vocab, tgt_vocab, N=6, d_model=512, d_ff=2048, h=8, dropout=0
         if p.dim() > 1:
             # 这里初始化采用的是nn.init.xavier_uniform
             nn.init.xavier_uniform_(p)
-    return model.to(DEVICE)
+    return model
 
 
 def batch_greedy_decode(model, src, src_mask, max_len=64, start_symbol=2, end_symbol=3):

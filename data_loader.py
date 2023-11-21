@@ -1,14 +1,15 @@
 import torch
+import os
+import mido
 import json
 import numpy as np
 from torch.autograd import Variable
 from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
-from utils import english_tokenizer_load
-from utils import chinese_tokenizer_load
+# from utils import english_tokenizer_load
+# from utils import chinese_tokenizer_load
 
 import config
-DEVICE = config.device
 
 
 def subsequent_mask(size):
@@ -25,25 +26,23 @@ def subsequent_mask(size):
 
 class Batch:
     """Object for holding a batch of data with mask during training."""
-    def __init__(self, src_text, trg_text, src, trg=None, pad=0):
-        self.src_text = src_text
-        self.trg_text = trg_text
-        src = src.to(DEVICE)
+    def __init__(self, src, trg=None, pad=0):
         self.src = src
         # 对于当前输入的句子非空部分进行判断成bool序列
         # 并在seq length前面增加一维，形成维度为 1×seq length 的矩阵
         self.src_mask = (src != pad).unsqueeze(-2)
         # 如果输出目标不为空，则需要对decoder要使用到的target句子进行mask
         if trg is not None:
-            trg = trg.to(DEVICE)
             # decoder要用到的target输入部分
             self.trg = trg[:, :-1]
+            self.trg = torch.cat([torch.zeros(self.trg.size(0), 1), self.trg], dim=1).to(torch.int64)
             # decoder训练时应预测输出的target结果
-            self.trg_y = trg[:, 1:]
+            self.trg_y = trg
             # 将target输入部分进行attention mask
             self.trg_mask = self.make_std_mask(self.trg, pad)
             # 将应输出的target结果中实际的词数进行统计
             self.ntokens = (self.trg_y != pad).data.sum()
+        self.pad = pad
 
     # Mask掩码操作
     @staticmethod
@@ -52,54 +51,124 @@ class Batch:
         tgt_mask = (tgt != pad).unsqueeze(-2)
         tgt_mask = tgt_mask & Variable(subsequent_mask(tgt.size(-1)).type_as(tgt_mask.data))
         return tgt_mask
+    
+    def to(self, device):
+        self.src = self.src.to(device)
+        self.src_mask = self.src_mask.to(device)
+        self.trg = self.trg.to(device)
+        self.trg_y = self.trg_y.to(device)
+        self.trg_mask = self.trg_mask.to(device)
+        self.ntokens = self.ntokens.to(device)
+    
+    
+class midi_note():
+    def __init__(self, type, note, velocity, time):
+        self.type = type
+        self.note = note
+        self.velocity = velocity
+        self.time = time
 
+class DMDataset(Dataset):
+    def __init__(self, data_path, window_size, learning_map, use_window=False, pad=0):
+        self.PAD = pad
+        self.window_size = window_size
+        self.learning_map = learning_map
+        self.use_window = use_window
+        self.duration_class = np.array(list(learning_map.keys()))
+        self.pitch_values, self.duration_idx_values = self.get_dataset_pitch_and_duration(data_path)
+        if use_window:
+            self.origin_idx, self.pitch_values, self.duration_idx_values = self.windowed_data(self.pitch_values, self.duration_idx_values, window_size)
+        else:
+            self.origin_idx = np.arange(len(self.pitch_values))
 
-class MTDataset(Dataset):
-    def __init__(self, data_path):
-        self.out_en_sent, self.out_cn_sent = self.get_dataset(data_path, sort=True)
-        self.sp_eng = english_tokenizer_load()
-        self.sp_chn = chinese_tokenizer_load()
-        self.PAD = self.sp_eng.pad_id()  # 0
-        self.BOS = self.sp_eng.bos_id()  # 2
-        self.EOS = self.sp_eng.eos_id()  # 3
+    def duration2class(self, duration):
+        class_idx = np.argmin(np.abs(self.duration_class - duration))
+        class_idx = self.learning_map[self.duration_class[class_idx]]
+        return class_idx
 
+    def get_pitch_and_duration(self, midi_path):
+        # 存储音高和时长的列表
+        pitch_values = []
+        duration_idx_values = []
+
+        # 读取 MIDI 文件
+        midi_file = mido.MidiFile(midi_path)
+
+        for track in midi_file.tracks:
+            notes = []
+            for msg in track:
+                if msg.type == 'note_on' or msg.type == 'note_off':
+                    one_note = midi_note(msg.type, msg.note, msg.velocity, msg.time)
+                    notes.append(one_note)
+
+            for i in range(len(notes)):
+                # 提取音符的音高和时长信息
+                if notes[i].type == 'note_on' and notes[i].velocity > 0:
+                    duration = 0
+                    for j in range(i+1, len(notes)):
+                        duration += notes[j].time
+                        if (notes[j].type == 'note_off' or (notes[j].type == 'note_on' and notes[j].velocity == 0)) and notes[i].note == notes[j].note:
+                            break
+                    if duration > 10000:
+                        break
+                    duration_idx_values.append(self.duration2class(duration))
+                    pitch_values.append(notes[i].note)
+
+        return pitch_values, duration_idx_values
+    
     @staticmethod
     def len_argsort(seq):
         """传入一系列句子数据(分好词的列表形式)，按照句子长度排序后，返回排序后原来各句子在数据中的索引下标"""
         return sorted(range(len(seq)), key=lambda x: len(seq[x]))
 
-    def get_dataset(self, data_path, sort=False):
-        """把中文和英文按照同样的顺序排序, 以英文句子长度排序的(句子下标)顺序为基准"""
-        dataset = json.load(open(data_path, 'r'))
-        out_en_sent = []
-        out_cn_sent = []
-        for idx, _ in enumerate(dataset):
-            out_en_sent.append(dataset[idx][0])
-            out_cn_sent.append(dataset[idx][1])
-        if sort:
-            sorted_index = self.len_argsort(out_en_sent)
-            out_en_sent = [out_en_sent[i] for i in sorted_index]
-            out_cn_sent = [out_cn_sent[i] for i in sorted_index]
-        return out_en_sent, out_cn_sent
+    def get_dataset_pitch_and_duration(self, dataset_path):
+        all_pitchs = []
+        all_duration_idxs = []
+        for midi_name in os.listdir(dataset_path):
+            midi_path = os.path.join(dataset_path, midi_name)
+            pitchs, duration_idxs = self.get_pitch_and_duration(midi_path)
+            all_pitchs.append(pitchs)
+            all_duration_idxs.append(duration_idxs)
+        
+        sorted_index = self.len_argsort(all_pitchs)
+        all_pitchs = [all_pitchs[i] for i in sorted_index]
+        all_duration_idxs = [all_duration_idxs[i] for i in sorted_index]
 
+        return all_pitchs, all_duration_idxs
+    
+    def windowed_data(self, pitchs, durations, window_size):
+        pitch_values = pitchs
+        duration_idx_values = durations
+
+        origin_idx = []
+        windowed_pitchs = []
+        windowed_durations = []
+        for idx, (pitchs, durations) in enumerate(zip(pitch_values, duration_idx_values)):
+            assert len(pitchs) == len(durations)
+            for j in range(len(pitchs) - window_size + 1):
+                origin_idx.append(idx)
+                windowed_pitchs.append(pitchs[j: j+window_size])
+                windowed_durations.append(durations[j: j+window_size])
+
+        return origin_idx, windowed_pitchs, windowed_durations
+    
     def __getitem__(self, idx):
-        eng_text = self.out_en_sent[idx]
-        chn_text = self.out_cn_sent[idx]
-        return [eng_text, chn_text]
+        origin_idx = self.origin_idx[idx]
+        pitchs = self.pitch_values[idx]
+        durations = self.duration_idx_values[idx]
+        return [origin_idx, pitchs, durations]
 
     def __len__(self):
-        return len(self.out_en_sent)
+        return len(self.pitch_values)
 
     def collate_fn(self, batch):
-        src_text = [x[0] for x in batch]
-        tgt_text = [x[1] for x in batch]
+        origin_idx = [x[0] for x in batch]
+        src = [x[1] for x in batch]
+        tgt = [x[2] for x in batch]
 
-        src_tokens = [[self.BOS] + self.sp_eng.EncodeAsIds(sent) + [self.EOS] for sent in src_text]
-        tgt_tokens = [[self.BOS] + self.sp_chn.EncodeAsIds(sent) + [self.EOS] for sent in tgt_text]
-
-        batch_input = pad_sequence([torch.LongTensor(np.array(l_)) for l_ in src_tokens],
+        batch_input = pad_sequence([torch.LongTensor(np.array(l_)) for l_ in src],
                                    batch_first=True, padding_value=self.PAD)
-        batch_target = pad_sequence([torch.LongTensor(np.array(l_)) for l_ in tgt_tokens],
+        batch_target = pad_sequence([torch.LongTensor(np.array(l_)) for l_ in tgt],
                                     batch_first=True, padding_value=self.PAD)
 
-        return Batch(src_text, tgt_text, batch_input, batch_target, self.PAD)
+        return torch.LongTensor(origin_idx), Batch(batch_input, batch_target, self.PAD)

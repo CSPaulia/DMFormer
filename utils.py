@@ -1,6 +1,5 @@
 import os
 import logging
-import sentencepiece as spm
 
 
 def chinese_tokenizer_load():
