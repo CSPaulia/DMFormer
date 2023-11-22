@@ -6,10 +6,6 @@ import numpy as np
 from torch.autograd import Variable
 from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
-# from utils import english_tokenizer_load
-# from utils import chinese_tokenizer_load
-
-import config
 
 
 def subsequent_mask(size):
@@ -81,12 +77,20 @@ class DMDataset(Dataset):
         else:
             self.origin_idx = np.arange(len(self.pitch_values))
 
+
     def duration2class(self, duration):
+        '''
+        将时长转换成标签，时长和标签的对应关系保存在DrumMusic.yaml中
+        '''
         class_idx = np.argmin(np.abs(self.duration_class - duration))
         class_idx = self.learning_map[self.duration_class[class_idx]]
         return class_idx
 
+    
     def get_pitch_and_duration(self, midi_path):
+        '''
+        获得midi文件，并提取midi文件中每一个音符的音高和时长
+        '''
         # 存储音高和时长的列表
         pitch_values = []
         duration_idx_values = []
@@ -103,10 +107,13 @@ class DMDataset(Dataset):
 
             for i in range(len(notes)):
                 # 提取音符的音高和时长信息
+                # notes[i].type == 'note_on' and notes[i].velocity > 0 是一个音符的开始
                 if notes[i].type == 'note_on' and notes[i].velocity > 0:
                     duration = 0
                     for j in range(i+1, len(notes)):
                         duration += notes[j].time
+                        # notes[j].type == 'note_off' or (notes[j].type == 'note_on' and notes[j].velocity == 0) 是一个音符的结束
+                        # 还需要判断结束和开始的音高是否相同
                         if (notes[j].type == 'note_off' or (notes[j].type == 'note_on' and notes[j].velocity == 0)) and notes[i].note == notes[j].note:
                             break
                     if duration > 10000:
@@ -122,6 +129,9 @@ class DMDataset(Dataset):
         return sorted(range(len(seq)), key=lambda x: len(seq[x]))
 
     def get_dataset_pitch_and_duration(self, dataset_path):
+        '''
+        获得dataset_path下的所有midi文件，提取midi文件中每一个音符的音高和时长并保存
+        '''
         all_pitchs = []
         all_duration_idxs = []
         for midi_name in os.listdir(dataset_path):
@@ -137,6 +147,26 @@ class DMDataset(Dataset):
         return all_pitchs, all_duration_idxs
     
     def windowed_data(self, pitchs, durations, window_size):
+        '''
+        将midi数据按照window大小进行切割。
+        示例：
+        >>> pitchs = [[1, 2, 3, 4, 5, 6, 7, 8, 9], [11, 12, 13, 14]]
+        >>> durations = [[1, 2, 3, 4, 5, 6, 7, 8, 9], [11, 12, 13, 14]]
+        >>> window_size = 4
+        >>> origin_idx, windowed_pitchs, windowed_durations = windowed_data(pitchs, durations, window_size)
+        >>> origin_idx
+        [0, 0, 0, 0, 0, 0, 1]
+        >>> windowed_pitchs
+        [
+            [1, 2, 3, 4]
+            [2, 3, 4, 5]
+            [3, 4, 5, 6]
+            [4, 5, 6, 7]
+            [5, 6, 7, 8]
+            [6, 7, 8, 9]
+            [11, 12, 13, 14]
+        ]
+        '''
         pitch_values = pitchs
         duration_idx_values = durations
 
