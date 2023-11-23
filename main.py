@@ -52,9 +52,9 @@ def run(args):
     test_dataset = DMDataset(config.test_data_path, config.window_size, learning_map, config.use_window)
 
     # 对数据集进行分布式采样，用于分布式训练（多GPU训练）
-    train_sampler = DistributedSampler(train_dataset)
-    dev_sampler = DistributedSampler(dev_dataset)
-    test_sampler = DistributedSampler(test_dataset)
+    train_sampler = DistributedSampler(train_dataset, shuffle=False)
+    dev_sampler = DistributedSampler(dev_dataset, shuffle=False)
+    test_sampler = DistributedSampler(test_dataset, shuffle=False)
 
     logging.info("-------- Dataset Build! --------")
     train_dataloader = DataLoader(train_dataset, shuffle=False, batch_size=config.batch_size,
@@ -75,7 +75,7 @@ def run(args):
     # 训练
     criterion = torch.nn.CrossEntropyLoss(ignore_index=0, reduction='sum')
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
-    # train(train_dataloader, dev_dataloader, model, criterion, optimizer, device, writer, config.use_window, config.window_size)
+    train(train_dataloader, dev_dataloader, model, criterion, optimizer, device, writer, config.use_window, config.window_size)
     test(test_dataloader, model, criterion, device, config.use_window, config.window_size)
 
     writer.close()

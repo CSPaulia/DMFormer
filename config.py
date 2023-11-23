@@ -18,7 +18,7 @@ epoch_num = 40
 early_stop = 5
 lr = 3e-4
 
-class_num = 30
+class_num = 31
 use_window = True
 window_size = 60
 

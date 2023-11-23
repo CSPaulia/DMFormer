@@ -121,7 +121,7 @@ def train(train_data, dev_data, model, criterion, optimizer, device, writer, use
         model.train()
         train_loss = run_epoch(train_data, model,
                                LossCompute(model.module.generator, criterion, optimizer), device)
-        logging.info("Epoch: {}, loss: {}".format(epoch, train_loss))
+        logging.info("Epoch: {}, Train loss: {}".format(epoch, train_loss))
         writer.add_scalar('train/loss', train_loss, epoch)
         # 模型验证
         model.eval()
@@ -129,7 +129,7 @@ def train(train_data, dev_data, model, criterion, optimizer, device, writer, use
                              LossCompute(model.module.generator, criterion, None), device)
         if use_window:
             acc, recovered_acc = evaluate(dev_data, model, device, use_window, window_size)
-            logging.info('Epoch: {}, Dev loss: {}, Acc: {}, Recovered Acc: {}'.format(epoch, dev_loss, acc, recovered_acc))
+            logging.info('Epoch: {}, Val loss: {}, Acc: {}, Recovered Acc: {}'.format(epoch, dev_loss, acc, recovered_acc))
             writer.add_scalar('validate/loss', dev_loss, epoch)
             writer.add_scalar('validate/acc', acc, epoch)
             writer.add_scalar('validate/recovered_acc', recovered_acc, epoch)

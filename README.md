@@ -19,7 +19,7 @@ Language: 简体中文
 This repo was tested on Python 3.8 and PyTorch 1.10.1. The main requirements are:
 
 - tqdm
-- pytorch >= 1.5.1
+- pytorch >= 1.10.1
 
 To get the environment settled quickly, run:
 
@@ -44,7 +44,7 @@ python -m torch.distributed.launch --nproc_per_node=NUM_GPUS_YOU_HAVE main.py
 
 | Model |  Best Acc  | Best Recovered Acc |
 | :---: |  :------:  | :----------------: |
-|   1   |   24.07    |        24.03       |
+|   1   |   61.70    |        62.30       |
 |   2   |     -      |          -         |
 |   3   |     -      |          -         |
 
@@ -52,7 +52,7 @@ python -m torch.distributed.launch --nproc_per_node=NUM_GPUS_YOU_HAVE main.py
 
 训练好的 Model 1 模型（当前最优模型）可以在如下链接直接下载😊：
 
-链接: https://pan.baidu.com/s/1RKC-HV_UmXHq-sy1-yZd2Q  密码: g9wl
+链接: XXXX  密码: XXXX
 
 ## Mention
 
@@ -61,6 +61,7 @@ The codes released in this reposity are only tested successfully with **Linux**.
 ## Todo List
 
 - [ ] windowed_data函数暂不支持window_size大于乐曲长度，需要更新
+- [ ] 完善test部分
 - [ ] 使用Greedy Decoder和Beam Search（不确定适用性）
 - [ ] 暂时只关注了有音高的音符，后续加入空拍的编码
 - [ ] 从输出预测中恢复出midi文件
